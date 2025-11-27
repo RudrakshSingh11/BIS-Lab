@@ -1,0 +1,163 @@
+import random
+import numpy as np
+
+# Extended problem data
+tasks = [1, 2, 3, 4, 5, 6, 7, 8]
+durations = {1: 3, 2: 2, 3: 4, 4: 2, 5: 3, 6: 1, 7: 2, 8: 3}
+predecessors = {
+    1: [],
+    2: [1],
+    3: [1],
+    4: [2, 3],
+    5: [2],
+    6: [4],
+    7: [5],
+    8: [6, 7]
+}
+resource_req = {t: 1 for t in tasks}
+resource_capacity = 2
+
+# ACO parameters
+m = 10       # number of ants
+T = 20       # iterations
+alpha = 1
+beta = 2
+rho = 0.1
+tau0 = 1
+
+n = len(tasks)
+# Initialize pheromone matrix (task x task)
+tau = np.ones((n, n)) * tau0
+
+# Heuristic info: inverse of duration (favor shorter tasks)
+eta = np.zeros((n, n))
+for i in range(n):
+    for j in range(n):
+        if i != j:
+            eta[i][j] = 1.0 / durations[tasks[j]]
+
+def can_schedule(task, scheduled):
+    """Check if all predecessors of the task are scheduled."""
+    return all(pred in scheduled for pred in predecessors[task])
+
+def resource_feasible(schedule):
+    """
+    Simulate schedule with resource constraints.
+    Returns makespan if feasible, None otherwise.
+    """
+    start_times = {}
+    for task in schedule:
+        # Earliest start time based on predecessors finishing
+        est = 0
+        for pred in predecessors[task]:
+            est = max(est, start_times[pred] + durations[pred])
+        
+        # Find earliest time slot with enough resource capacity
+        t = est
+        while True:
+            running = [x for x in start_times if start_times[x] <= t < start_times[x] + durations[x]]
+            if len(running) + resource_req[task] <= resource_capacity:
+                break
+            t += 1
+        start_times[task] = t
+    
+    makespan = max(start_times[t] + durations[t] for t in schedule)
+    return makespan
+
+def construct_schedule(tau, eta, alpha, beta):
+    scheduled = []
+    unscheduled = tasks.copy()
+
+    while unscheduled:
+        allowed = [t for t in unscheduled if can_schedule(t, scheduled)]
+        if not allowed:
+            return None, None
+
+        probabilities = []
+        last_task = scheduled[-1] - 1 if scheduled else None
+
+        for t in allowed:
+            j = t - 1
+            if last_task is None:
+                # No previous task, only heuristic
+                prob = eta[0][j] ** beta
+            else:
+                prob = (tau[last_task][j] ** alpha) * (eta[last_task][j] ** beta)
+            probabilities.append(prob)
+        
+        probabilities = np.array(probabilities)
+        total = probabilities.sum()
+        if total == 0 or np.isnan(total):
+            # If all zeros or invalid, assign equal probabilities
+            probabilities = np.ones_like(probabilities) / len(probabilities)
+        else:
+            probabilities = probabilities / total
+        
+        chosen_task = random.choices(allowed, weights=probabilities)[0]
+        scheduled.append(chosen_task)
+        unscheduled.remove(chosen_task)
+
+    makespan = resource_feasible(scheduled)
+    return scheduled, makespan
+
+# Main ACO loop
+best_schedule = None
+best_makespan = float('inf')
+
+for iteration in range(T):
+    schedules = []
+    makespans = []
+
+    for ant in range(m):
+        schedule, makespan = construct_schedule(tau, eta, alpha, beta)
+        if schedule is not None and makespan is not None:
+            schedules.append(schedule)
+            makespans.append(makespan)
+            if makespan < best_makespan:
+                best_makespan = makespan
+                best_schedule = schedule
+    
+    # Evaporate pheromone
+    tau = (1 - rho) * tau
+
+    # Update pheromone based on good schedules
+    for i, schedule in enumerate(schedules):
+        for k in range(len(schedule) - 1):
+            from_task = schedule[k] - 1
+            to_task = schedule[k+1] - 1
+            tau[from_task][to_task] += 1.0 / makespans[i]
+
+# Detailed output
+print("Best Schedule Found (Task Order):", best_schedule)
+print("Task Start Times and Durations:")
+
+# Calculate start times for best schedule to display
+start_times = {}
+for task in best_schedule:
+    est = 0
+    for pred in predecessors[task]:
+        est = max(est, start_times[pred] + durations[pred])
+    t = est
+    while True:
+        running = [x for x in start_times if start_times[x] <= t < start_times[x] + durations[x]]
+        if len(running) + resource_req[task] <= resource_capacity:
+            break
+        t += 1
+    start_times[task] = t
+
+for task in best_schedule:
+    print(f" Task {task}: Start at {start_times[task]}, Duration {durations[task]}")
+
+print(f"\nTotal Project Makespan: {best_makespan} time units")
+Best Schedule Found (Task Order): [1, 2, 3, 5, 7, 4, 6, 8]
+Task Start Times and Durations:
+ Task 1: Start at 0, Duration 3
+ Task 2: Start at 3, Duration 2
+ Task 3: Start at 3, Duration 4
+ Task 5: Start at 5, Duration 3
+ Task 7: Start at 8, Duration 2
+ Task 4: Start at 7, Duration 2
+ Task 6: Start at 9, Duration 1
+ Task 8: Start at 10, Duration 3
+
+Total Project Makespan: 13 time units
